@@ -78,8 +78,9 @@ host_test = [
 [tool.setuptools]
 include-package-data = false
 
-[tool.setuptools.packages]
-find = {namespaces = false}
+[tool.setuptools.packages.find]
+include = ['esp_idf_monitor*']
+namespaces = false
 
 [tool.setuptools.dynamic]
 version = {attr = 'esp_idf_monitor.__version__'}
