@@ -96,6 +96,17 @@ from esp_idf_monitor.config import Config
 key_description = miniterm.key_description
 
 
+def _create_console(non_interactive: bool):
+    """Create miniterm's console without allowing it to replace stderr."""
+    real_stderr = sys.stderr
+    try:
+        return miniterm.ConsoleBase() if non_interactive else miniterm.Console()
+    finally:
+        # pyserial's Windows Console replaces stderr with a UTF-8 writer that
+        # has no isatty(), which makes Rich disable colors for monitor messages.
+        sys.stderr = real_stderr
+
+
 class Monitor:
     """
     Monitor application base class.
@@ -135,7 +146,7 @@ class Monitor:
         # ConsoleBase writes to stdout but never touches the TTY, so it is safe
         # to use when stdin is not attached to a terminal (pipe, file, CI).
         # The Console subclass requires a real TTY on construction.
-        self.console = miniterm.ConsoleBase() if non_interactive else miniterm.Console()
+        self.console = _create_console(non_interactive)
         # Chip/serial ANSI (stdout via miniterm) still needs the Windows converter.
         # Monitor messages go through Rich on the real sys.stderr — do not wrap it,
         # or EspLog.err/warn lose TTY detection (no color, hard-wrap at 80 cols).
@@ -497,6 +508,10 @@ def _run_monitor(
     invoked from the click command (production) and from tests that want
     to drive the monitor without going through ``cli.main(argv)``.
     """
+    # Apply the CLI color policy to Rich-based monitor messages as well as
+    # miniterm's serial output. Reinstalling also resets a previous invocation.
+    install_monitor_log(force_color=force_color)
+
     # Without a TTY on stdin (pipe, file, CI) interactive key reading is not
     # possible; switch to the non-interactive mode, where line-based commands
     # are read from stdin instead (see CommandReader).
