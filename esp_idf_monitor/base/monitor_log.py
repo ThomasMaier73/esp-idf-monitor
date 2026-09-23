@@ -8,7 +8,6 @@ Keep ``log.warn`` / ``log.err`` for problems; help/menu chrome may use ``style='
 """
 
 import re
-import sys
 
 from esp_pylib.logger import EspLog
 
@@ -40,8 +39,12 @@ class MonitorLog(EspLog):
 
     def __init__(self):
         super().__init__()
-        # Route all output to stderr, the log from chip is printed as bytes on stdout, not using this class
-        self.set_console_options(file=sys.stderr, soft_wrap=True)
+        self.set_console_options(soft_wrap=True)
+
+    @property
+    def stdout(self):
+        """Route ordinary monitor output to stderr; stdout carries chip bytes."""
+        return self.stderr
 
     def print(self, *args, **kwargs) -> None:
         """Add the common ``--- `` prefix to the message and print it."""
@@ -56,10 +59,12 @@ class MonitorLog(EspLog):
         super().counter_line(message, '', final=final)
 
 
-def install_monitor_log() -> None:
+def install_monitor_log(force_color: bool = False) -> None:
     """Install (or re-install) `MonitorLog` as the global `esp_pylib` logger.
 
     ``MonitorLog`` inherits `EspLog`'s per-class singleton behaviour, so
     ``MonitorLog()`` always returns the same instance.
     """
-    EspLog.set_logger(MonitorLog())
+    monitor_log = MonitorLog()
+    monitor_log.set_console_options(soft_wrap=True, force_terminal=True if force_color else None)
+    EspLog.set_logger(monitor_log)

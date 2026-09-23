@@ -6,6 +6,7 @@ import codecs
 import datetime
 import errno
 import filecmp
+import io
 import os
 import queue
 import random
@@ -23,9 +24,11 @@ from typing import Tuple
 from unittest.mock import patch
 
 import pytest
+from esp_pylib.logger import EspLog
 from esp_pylib.logger import log
 
 from esp_idf_monitor import __version__
+from esp_idf_monitor import idf_monitor
 from esp_idf_monitor.base.binlog import BinaryLog
 from esp_idf_monitor.base.command_reader import CommandReader
 from esp_idf_monitor.base.console_parser import ConsoleParser
@@ -43,6 +46,8 @@ from esp_idf_monitor.base.constants import EXIT_SCRIPT_ERROR
 from esp_idf_monitor.base.constants import TAG_CMD
 from esp_idf_monitor.base.constants import TAG_KEY
 from esp_idf_monitor.base.logger import Logger
+from esp_idf_monitor.base.monitor_log import MonitorLog
+from esp_idf_monitor.base.monitor_log import install_monitor_log
 from esp_idf_monitor.idf_monitor import Monitor
 
 from .conftest import out_dir
@@ -1109,6 +1114,48 @@ class TestLogger:
         assert b'Stack dump detected' in content
         assert b'[yellow]' not in content
         assert b'Core  0 register dump:' in content
+
+    def test_monitor_log_print_console_keeps_terminal_detection(self):
+        monitor_log = MonitorLog()
+
+        assert monitor_log.stdout is monitor_log.stderr
+        assert monitor_log._options['file'] is None
+        assert monitor_log.stdout._force_terminal is not False
+
+    @pytest.mark.parametrize(
+        ('force_color', 'force_terminal'),
+        [
+            (False, None),
+            (True, True),
+        ],
+    )
+    def test_install_monitor_log_applies_force_color(self, force_color, force_terminal):
+        previous_logger = EspLog.instance
+        monitor_log = MonitorLog()
+        try:
+            install_monitor_log(force_color=force_color)
+
+            assert monitor_log._options['force_terminal'] is force_terminal
+        finally:
+            monitor_log.set_console_options(soft_wrap=True)
+            if previous_logger is not None:
+                EspLog.set_logger(previous_logger)
+
+    def test_create_console_restores_stderr(self, monkeypatch):
+        real_stderr = io.StringIO()
+        replacement_stderr = io.StringIO()
+
+        class ReplacingConsole:
+            def __init__(self):
+                sys.stderr = replacement_stderr
+
+        monkeypatch.setattr(sys, 'stderr', real_stderr)
+        monkeypatch.setattr(idf_monitor.miniterm, 'Console', ReplacingConsole)
+
+        console = idf_monitor._create_console(non_interactive=False)
+
+        assert isinstance(console, ReplacingConsole)
+        assert sys.stderr is real_stderr
 
 
 class TestFlashAllCommands:
