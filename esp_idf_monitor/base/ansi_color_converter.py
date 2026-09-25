@@ -1,6 +1,7 @@
-# SPDX-FileCopyrightText: 2015-2023 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2015-2026 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
+import codecs
 import ctypes
 import os
 import re
@@ -64,6 +65,10 @@ class ANSIColorConverter:
         self.handle = GetStdHandle(STD_ERROR_HANDLE if self.output == sys.stderr else STD_OUTPUT_HANDLE)
         self.matched = b''
         self.decode_buffer = b''
+        # Windows console (_WindowsConsoleIO) returns 0 for a write consisting only of an incomplete or invalid
+        # UTF-8 sequence, and BufferedWriter.flush() then retries forever (e.g. serial noise on brownout).
+        # Hold back incomplete sequences and replace invalid bytes so only valid UTF-8 reaches the console.
+        self.utf8_decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
         self.force_color = force_color  # always print ANSI for colors if true
 
     def _output_write(self, data):  # type: (Union[str, bytes]) -> None
@@ -73,7 +78,9 @@ class ANSIColorConverter:
                 self.output.write(self.decode_buffer.decode())  # type: ignore
                 self.decode_buffer = b''
             else:
-                self.output.write(data)  # type: ignore
+                text = self.utf8_decoder.decode(data)  # type: ignore
+                if text:
+                    self.output.write(text.encode('utf-8'))  # type: ignore
         except OSError:
             # Windows 10 bug since the Fall Creators Update, sometimes writing to console randomly throws
             # an exception (however, the character is still written to the screen)

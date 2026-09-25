@@ -29,6 +29,7 @@ from esp_pylib.logger import log
 
 from esp_idf_monitor import __version__
 from esp_idf_monitor import idf_monitor
+from esp_idf_monitor.base.ansi_color_converter import ANSIColorConverter
 from esp_idf_monitor.base.binlog import BinaryLog
 from esp_idf_monitor.base.command_reader import CommandReader
 from esp_idf_monitor.base.console_parser import ConsoleParser
@@ -1269,6 +1270,68 @@ class TestTagKeyEncoding:
         # sanity: the previous strict encode path would have raised
         with pytest.raises(UnicodeEncodeError):
             codecs.encode(data)
+
+
+class TestANSIColorConverter:
+    """Regression tests for the Windows ANSI color converter writing chip output to the console."""
+
+    class _ByteOutput:
+        """Stand-in for sys.stdout.buffer, records every write."""
+
+        def __init__(self):
+            self.written = []  # type: List[bytes]
+
+        def write(self, data):  # type: (bytes) -> None
+            self.written.append(data)
+
+        def flush(self):  # type: () -> None
+            pass
+
+    @pytest.fixture
+    def converter(self, monkeypatch):
+        # Win32 console API is not available on other platforms, the converter only needs a handle
+        self.console_attributes = []  # type: List[int]
+        monkeypatch.setattr(
+            'esp_idf_monitor.base.ansi_color_converter.GetStdHandle', lambda handle: handle, raising=False
+        )
+        monkeypatch.setattr(
+            'esp_idf_monitor.base.ansi_color_converter.SetConsoleTextAttribute',
+            lambda handle, color: self.console_attributes.append(color),
+            raising=False,
+        )
+        return ANSIColorConverter(self._ByteOutput())
+
+    def test_invalid_utf8_is_replaced(self, converter):
+        """Serial noise (e.g. on brownout) must not reach the console as an invalid or incomplete UTF-8 sequence.
+
+        The Windows console accepts nothing from such a sequence, and flush() of sys.stdout.buffer then retries
+        forever.
+        """
+        converter.write(b'E BOD: Brownout detector was tr\xe9')
+        converter.flush()
+        converter.write(b'\r\n')
+        converter.flush()
+
+        output = b''.join(converter.output.written)
+        assert output == 'E BOD: Brownout detector was tr�\r\n'.encode()
+        for chunk in converter.output.written:
+            chunk.decode('utf-8')  # every single write must be valid UTF-8
+
+    def test_multibyte_character_split_across_writes(self, converter):
+        """A valid UTF-8 character received in separate chunks must be written intact."""
+        converter.write(b'Umlaut: \xc3')
+        converter.flush()
+        converter.write(b'\xa4\n')
+
+        assert b''.join(converter.output.written) == 'Umlaut: ä\n'.encode()
+        assert b'\xc3' not in converter.output.written
+
+    def test_ansi_colors_converted(self, converter):
+        """ANSI color sequences must still be converted to console attributes, not written as text."""
+        converter.write(b'\033[0;31mE (123) test: \xc3\xa4\033[0m\n')
+
+        assert b''.join(converter.output.written) == 'E (123) test: ä\n'.encode()
+        assert self.console_attributes == [4, 7]  # red, then reset to grey
 
 
 class TestCommandReader:
